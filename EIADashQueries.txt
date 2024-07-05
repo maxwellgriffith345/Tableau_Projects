@@ -1,0 +1,70 @@
+Net Generation
+let
+    currentDate=DateTime.ToText(DateTime.LocalNow(), "yyyy-MM-dd"),
+    tomorrowDate=DateTime.ToText(DateTime.LocalNow()+ #duration(1, 0,0,0), "yyyy-MM-dd"),
+    yesterdayDate=DateTime.ToText(DateTime.LocalNow()+ #duration(-1, 0,0,0), "yyyy-MM-dd"),
+    lastweekDate=DateTime.ToText(DateTime.LocalNow()+ #duration(-7, 0,0,0), "yyyy-MM-dd"),
+    tomorrow= Date.From(DateTime.LocalNow()+ #duration(1, 0,0,0)),
+    URL="https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?frequency=hourly&data[0]=value&facets[respondent][]=CENT&start="&yesterdayDate&"T00&end="&tomorrowDate&"T00&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000",
+    web=Web.Contents(URL, [ApiKeyName="api_key"]),
+    Source = Json.Document(web),
+    response = Source[response],
+    data = response[data],
+    #"Converted to Table" = Table.FromList(data, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Expanded Column1" = Table.ExpandRecordColumn(#"Converted to Table", "Column1", {"period", "respondent", "respondent-name", "fueltype", "type-name", "value", "value-units"}, {"period", "respondent", "respondent-name", "fueltype", "type-name", "value", "value-units"}),
+    #"Changed Type" = Table.TransformColumnTypes(#"Expanded Column1",{{"period", type datetime}}),
+    #"Inserted Time" = Table.AddColumn(#"Changed Type", "Time", each DateTime.Time([period]), type time),
+    #"Inserted Date" = Table.AddColumn(#"Inserted Time", "Date", each DateTime.Date([period]), type date),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Inserted Date",{{"value", type number}})
+in
+    #"Changed Type1"
+	
+Multi Day Demand Forecast
+let
+    currentDate=DateTime.ToText(DateTime.LocalNow(), "yyyy-MM-dd"),
+    tomorrowDate=DateTime.ToText(DateTime.LocalNow()+ #duration(1, 0,0,0), "yyyy-MM-dd"),
+    yesterdayDate=DateTime.ToText(DateTime.LocalNow()+ #duration(-1, 0,0,0), "yyyy-MM-dd"),
+    lastweekDate=DateTime.ToText(DateTime.LocalNow()+ #duration(-7, 0,0,0), "yyyy-MM-dd"),
+    tomorrow= Date.From(DateTime.LocalNow()+ #duration(1, 0,0,0)),
+    URL="https://api.eia.gov/v2/electricity/rto/region-data/data/?frequency=hourly&data[0]=value&facets[type][]=DF&facets[respondent][]=CENT&start="&lastweekDate&"T00&end="&tomorrowDate&"T00&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000",
+    web=Web.Contents(URL, [ApiKeyName="api_key"]),
+    Source = Json.Document(web),
+    response = Source[response],
+    data = response[data],
+    #"Converted to Table" = Table.FromList(data, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Expanded Column1" = Table.ExpandRecordColumn(#"Converted to Table", "Column1", {"period", "respondent", "respondent-name", "type", "type-name", "value", "value-units"}, {"Column1.period", "Column1.respondent", "Column1.respondent-name", "Column1.type", "Column1.type-name", "Column1.value", "Column1.value-units"}),
+    #"Changed Type" = Table.TransformColumnTypes(#"Expanded Column1",{{"Column1.period", type datetime}}),
+    #"Inserted Time" = Table.AddColumn(#"Changed Type", "Time", each DateTime.Time([Column1.period]), type time),
+    #"Inserted Date" = Table.AddColumn(#"Inserted Time", "Date", each DateTime.Date([Column1.period]), type date),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Inserted Date",{{"Column1.value", Int64.Type}}),
+    #"Renamed Columns" = Table.RenameColumns(#"Changed Type1",{{"Column1.value", "DemandForecast"}}),
+    FilteredRows=Table.SelectRows(#"Renamed Columns", each [Date] <> tomorrow)
+in
+    FilteredRows
+	
+MultiDay Weather Forecast
+let
+    currentDate=DateTime.ToText(DateTime.LocalNow(), "yyyy-MM-dd"),
+    yesterdayDate=DateTime.ToText(DateTime.LocalNow()+ #duration(-1, 0,0,0), "yyyy-MM-dd"),
+    url= "https://api.open-meteo.com/v1/forecast?latitude=35.44,34.42,38.82,40.78,43.79,46.8&longitude=-97.51,-103.2,-97.61,-96.67,-99.33,-100.76&hourly=wind_speed_120m,temperature_120m&temperature_unit=fahrenheit&wind_speed_unit=mph&start_date="&yesterdayDate&"&end_date="&currentDate,
+    wb = Web.Contents(url,
+        [
+            Headers=[#"Accept-Encoding"= "gzip"
+            ]
+        ]
+        ),
+    Source=Json.Document(wb),
+    #"Converted to Table" = Table.FromList(Source, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Expanded Column1" = Table.ExpandRecordColumn(#"Converted to Table", "Column1", {"latitude", "longitude", "generationtime_ms", "utc_offset_seconds", "timezone", "timezone_abbreviation", "elevation", "hourly_units", "hourly", "location_id"}, {"latitude", "longitude", "generationtime_ms", "utc_offset_seconds", "timezone", "timezone_abbreviation", "elevation", "hourly_units", "hourly", "location_id"}),
+    #"Removed Columns" = Table.RemoveColumns(#"Expanded Column1",{"hourly_units"}),
+    #"Expanded hourly" = Table.ExpandRecordColumn(#"Removed Columns", "hourly", {"time", "wind_speed_120m", "temperature_120m"}, {"time", "wind_speed_120m", "temperature_120m"}),
+    #"Added Custom" = Table.AddColumn(#"Expanded hourly", "Custom", each Table.FromColumns({[time],[wind_speed_120m],[temperature_120m]})),
+    #"Removed Columns1" = Table.RemoveColumns(#"Added Custom",{"time", "wind_speed_120m", "temperature_120m"}),
+    #"Expanded Custom" = Table.ExpandTableColumn(#"Removed Columns1", "Custom", {"Column1", "Column2", "Column3"}, {"Column1", "Column2", "Column3"}),
+    #"Renamed Columns" = Table.RenameColumns(#"Expanded Custom",{{"Column2", "WindSpeed"}, {"Column3", "Temp"}}),
+    #"Changed Type" = Table.TransformColumnTypes(#"Renamed Columns",{{"Column1", type datetime}}),
+    #"Inserted Time" = Table.AddColumn(#"Changed Type", "Time", each DateTime.Time([Column1]), type time),
+    #"Inserted Date" = Table.AddColumn(#"Inserted Time", "Date", each DateTime.Date([Column1]), type date),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Inserted Date",{{"Temp", type number}, {"WindSpeed", type number}})
+in
+    #"Changed Type1"
